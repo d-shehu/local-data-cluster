@@ -1,0 +1,28 @@
+ARG REPO
+FROM ${REPO}/data/spark_base:latest
+
+COPY master.sh /
+
+ENV SPARK_MASTER_PORT 7077
+ENV SPARK_MASTER_WEBUI_PORT 8080
+ENV SPARK_MASTER_LOG /spark/logs
+
+ENV LIVY_BUILD_VERSION 0.7.0-incubating
+ENV LIVY_PACKAGE apache-livy-$LIVY_BUILD_VERSION-bin
+ENV LIVY_HOME /livy
+ENV LIVY_LOG $LIVY_HOME/logs
+
+# Clone Livy repository
+RUN mkdir -p /tmp && \
+    cd /tmp && \
+    wget "http://archive.apache.org/dist/incubator/livy/$LIVY_BUILD_VERSION/$LIVY_PACKAGE.zip" && \
+    unzip "$LIVY_PACKAGE.zip" && \
+    mv $LIVY_PACKAGE $LIVY_HOME && \
+    rm "/tmp/$LIVY_PACKAGE.zip" && \
+    mkdir -p $LIVY_LOG
+
+COPY livy.conf $LIVY_HOME/conf/
+
+EXPOSE 8080 7077 6066
+
+CMD ["/bin/bash", "/master.sh"]

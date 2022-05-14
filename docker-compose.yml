@@ -1,0 +1,380 @@
+version: "3.7"
+
+services:
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: namenode
+    restart: always
+    ports:
+      - 17070:9870
+      - 17000:9000
+    volumes:
+      - hadoop_name:/hadoop/dfs/name:delegated
+    environment:
+      - CLUSTER_NAME=data-cluster.${ENVIRONMENT}
+    env_file:
+      - ./hadoop.env
+
+  datanode_1:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: datanode_1
+    restart: always
+    ports:
+      - 17064:9864
+    volumes:
+      - hadoop_data_1:/hadoop/dfs/data:delegated
+    environment:
+      SERVICE_PRECONDITION: "namenode:9870"
+    depends_on:
+      - namenode
+    env_file:
+      - ./hadoop.env
+
+  datanode_2:
+      image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+      container_name: datanode_2
+      restart: always
+      ports:
+        - 17164:9864
+      volumes:
+        - hadoop_data_2:/hadoop/dfs/data:delegated
+      environment:
+        SERVICE_PRECONDITION: "namenode:9870"
+      depends_on:
+        - namenode
+      env_file:
+        - ./hadoop.env
+
+  datanode_3:
+      image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+      container_name: datanode_3
+      restart: always
+      ports:
+        - 17264:9864
+      volumes:
+        - hadoop_data_3:/hadoop/dfs/data:delegated
+      environment:
+        SERVICE_PRECONDITION: "namenode:9870"
+      depends_on:
+        - namenode
+      env_file:
+        - ./hadoop.env
+
+  resourcemanager:
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop3.2.1-java8
+    container_name: resourcemanager
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode_1:9864 datanode_2:9864 datanode_3:9864"
+    depends_on:
+      - namenode
+      - datanode_1
+      - datanode_2
+      - datanode_3
+    ports:
+      - 17088:8088
+    env_file:
+      - ./hadoop.env
+
+  nodemanager:
+    image: bde2020/hadoop-nodemanager:2.0.0-hadoop3.2.1-java8
+    container_name: nodemanager
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode_1:9864 datanode_2:9864 datanode_3:9864 resourcemanager:8088"
+    depends_on:
+      - namenode
+      - datanode_1
+      - datanode_2
+      - datanode_3
+      - resourcemanager
+    env_file:
+      - ./hadoop.env
+
+  historyserver:
+    image: bde2020/hadoop-historyserver:2.0.0-hadoop3.2.1-java8
+    container_name: historyserver
+    restart: always
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode_1:9864 datanode_2:9864 datanode_3:9864 resourcemanager:8088"
+    depends_on:
+      - namenode
+      - datanode_1
+      - datanode_2
+      - datanode_3
+      - resourcemanager
+    ports:
+      - "17188:8188"
+    volumes:
+      - hadoop_history:/hadoop/yarn/timeline:delegated
+    env_file:
+      - ./hadoop.env
+
+  hive-server:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-server
+    restart: always
+    env_file:
+      - ./hadoop-hive.env
+    environment:
+      HIVE_CORE_CONF_javax_jdo_option_ConnectionURL: "jdbc:postgresql://hive-metastore/metastore"
+      SERVICE_PRECONDITION: "hive-metastore:9083"
+    depends_on:
+      - hive-metastore
+    ports:
+      - "17100:10000"
+
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-metastore
+    restart: always
+    env_file:
+      - ./hadoop-hive.env
+    command: /opt/hive/bin/hive --service metastore
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 namenode:9870 datanode_1:9864 datanode_2:9864 datanode_3:9864 hive-metastore-postgresql:5432 resourcemanager:8088"
+    depends_on:
+      - hive-metastore-postgresql
+    ports:
+      - "17183:9083"
+
+  hive-metastore-postgresql:
+    image: bde2020/hive-metastore-postgresql:2.3.0
+    container_name: hive-metastore-postgresql
+    restart: always
+    volumes:
+      - hive_metastore_pg_data:/var/lib/postgresql/data:delegated
+    depends_on:
+      - datanode_1
+      - datanode_2
+      - datanode_3
+    ports:
+      - "17032:5432"
+
+  spark-master:
+    image: data/spark_master
+    container_name: spark-master
+    restart: always
+    hostname: spark-master
+    ports:
+      - 17080:17080
+      - 17077:17077
+      - 17998:17998
+    environment:
+      - INIT_DAEMON_STEP=setup_spark
+      - "SPARK_LOCAL_IP=0.0.0.0"
+      - "SPARK_PUBLIC_DNS=$HOST_IP_ADDR"
+      - "SPARK_MASTER_PORT=17077"
+      - "SPARK_MASTER_WEBUI_PORT=17080"
+    env_file:
+      - ./hadoop.env
+
+  spark-worker-1:
+    image: data/spark_worker
+    container_name: spark-worker-1
+    restart: always
+    hostname: spark-worker-1
+    depends_on:
+      - spark-master
+    environment:
+      - "SPARK_MASTER=spark://spark-master:17077"
+      - "SPARK_WORKER_CORES=1"
+      - "SPARK_WORKER_MEMORY=2g"
+      - "SPARK_WORKER_PORT=17881"
+      - "SPARK_WORKER_WEBUI_PORT=17081"
+      - "SPARK_PUBLIC_DNS=$HOST_IP_ADDR"
+    ports:
+      - 17081:17081
+      - 17881:17881
+    env_file:
+      - ./hadoop.env
+  spark-worker-2:
+    image: data/spark_worker
+    container_name: spark-worker-2
+    restart: always
+    hostname: spark-worker-2
+    depends_on:
+      - spark-master
+    environment:
+      - "SPARK_MASTER=spark://spark-master:17077"
+      - "SPARK_WORKER_CORES=1"
+      - "SPARK_WORKER_MEMORY=2g"
+      - "SPARK_WORKER_PORT=17882"
+      - "SPARK_WORKER_WEBUI_PORT=17082"
+      - "SPARK_PUBLIC_DNS=$HOST_IP_ADDR"
+    ports:
+      - 17082:17082
+      - 17882:17882
+    env_file:
+      - ./hadoop.env
+
+  spark-worker-3:
+    image: data/spark_worker
+    container_name: spark-worker-3
+    restart: always
+    hostname: spark-worker-3
+    depends_on:
+      - spark-master
+    environment:
+      - "SPARK_MASTER=spark://spark-master:17077"
+      - "SPARK_WORKER_CORES=1"
+      - "SPARK_WORKER_MEMORY=2g"
+      - "SPARK_WORKER_PORT=17883"
+      - "SPARK_WORKER_WEBUI_PORT=17083"
+      - "SPARK_PUBLIC_DNS=$HOST_IP_ADDR"
+    ports:
+      - 17083:17083
+      - 17883:17883
+    env_file:
+      - ./hadoop.env
+
+  spark-worker-4:
+    image: data/spark_worker
+    container_name: spark-worker-4
+    restart: always
+    hostname: spark-worker-4
+    depends_on:
+      - spark-master
+    environment:
+      - "SPARK_MASTER=spark://spark-master:17077"
+      - "SPARK_WORKER_CORES=1"
+      - "SPARK_WORKER_MEMORY=2g"
+      - "SPARK_WORKER_PORT=17884"
+      - "SPARK_WORKER_WEBUI_PORT=17084"
+      - "SPARK_PUBLIC_DNS=$HOST_IP_ADDR"
+    ports:
+      - 17084:17084
+      - 17884:17884
+    env_file:
+      - ./hadoop.env
+
+  # flink-master:
+  #   image: bde2020/flink-master:1.14.2-hadoop3.2
+  #   hostname: flink-master
+  #   container_name: flink-master
+  #   restart: always
+  #   environment:
+  #     - CORE_CONF_fs_defaultFS=hdfs://namenode:9000
+  #     - YARN_CONF_yarn_resourcemanager_hostname=resourcemanager
+  #     - INIT_DAEMON_STEP=setup_flink
+  #     - VIRTUAL_PORT=8180
+  #   env_file:
+  #     - ./hadoop.env
+  #   depends_on:
+  #     - namenode
+  #     - resourcemanager
+  #   ports:
+  #     - "17180:8180"
+  #     - "17181:8181"
+  #
+  # flink-worker:
+  #   image: bde2020/flink-worker:1.14.2-hadoop3.2
+  #   hostname: flink-worker
+  #   container_name: flink-worker
+  #   restart: always
+  #   environment:
+  #     - CORE_CONF_fs_defaultFS=hdfs://namenode:8020
+  #     - YARN_CONF_yarn_resourcemanager_hostname=resourcemanager
+  #     - FLINK_MASTER_PORT_6123_TCP_ADDR=flink-master
+  #     - FLINK_MASTER_PORT_6123_TCP_PORT=8180
+  #     - VIRTUAL_PORT=8181
+  #   env_file:
+  #     - ./hadoop.env
+  #   depends_on:
+  #     - flink-master
+
+  huedb:
+    image: postgres
+    container_name: huedb
+    restart: always
+    volumes:
+      - hue_pg_data:/var/lib/postgresql/data/pgdata:delegated
+    ports:
+      - 17132:5432
+    env_file:
+      - ./hadoop-hive.env
+    environment:
+      SERVICE_PRECONDITION: "namenode:9000 datanode:9870 hive-metastore-postgresql:5432 resourcemanager:8088 hive-server:10000 hive-metastore:9083"
+    depends_on:
+      - namenode
+      - datanode_1
+      - datanode_2
+      - datanode_3
+      - resourcemanager
+      - hive-server
+      - hive-metastore
+      - hive-metastore-postgresql
+
+  hue:
+    image: gethue/hue:4.6.0
+    container_name: hue
+    restart: always
+    environment:
+        SERVICE_PRECONDITION: "namenode:9000 datanode:9870 hive-metastore-postgresql:5432 resourcemanager:8088 hive-server:10000 hive-metastore:9083 huedb:5432"
+    depends_on:
+      - namenode
+      - datanode_1
+      - datanode_2
+      - datanode_3
+      - resourcemanager
+      - hive-server
+      - hive-metastore
+      - hive-metastore-postgresql
+      - huedb
+    ports:
+      - "17888:8888"
+    volumes:
+      - ./hue-overrides.ini:/usr/share/hue/desktop/conf/hue-overrides.ini
+    links:
+      - huedb
+
+volumes:
+  hadoop_data_1:
+    name: hadoop_data_1
+    external: true
+    #driver_opts:
+    #  type: none
+    #  o: bind
+    #  device: $PORTABLE_RUNTIME_DIR/volumes/data-cluster/hadoop/data_1
+  hadoop_data_2:
+      name: hadoop_data_2
+      external: true
+      #driver_opts:
+      #  type: none
+      #  o: bind
+      #  device: $PORTABLE_RUNTIME_DIR/volumes/data-cluster/hadoop/data_2
+  hadoop_data_3:
+      name: hadoop_data_3
+      external: true
+      #driver_opts:
+      #  type: none
+      #  o: bind
+      #  device: $PORTABLE_RUNTIME_DIR/volumes/data-cluster/hadoop/data_3
+  hadoop_name:
+    name: hadoop_name
+    external: true
+    #driver_opts:
+    #  type: none
+    #  o: bind
+    #  device: $PORTABLE_RUNTIME_DIR/volumes/data-cluster/hadoop/name
+  hadoop_history:
+    name: hadoop_history
+    external: true
+    #driver_opts:
+    #  type: none
+    #  o: bind
+    #  device: $PORTABLE_RUNTIME_DIR/volumes/data-cluster/hadoop/history
+  hive_metastore_pg_data:
+    name: hive_metastore_pg_data
+    external: true
+    #driver_opts:
+    #  type: none
+    #  o: bind
+    #  device: $PORTABLE_RUNTIME_DIR/volumes/data-cluster/hive_metastore_pg_data
+  hue_pg_data:
+    name: hue_pg_data
+    external: true
+    #driver_opts:
+    #  type: none
+    #  o: bind
+    #  device: $PORTABLE_RUNTIME_DIR/volumes/data-cluster/hue_pg_data
