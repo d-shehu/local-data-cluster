@@ -1,5 +1,6 @@
-FROM alpine:3.15
+FROM ubuntu:20.04
 
+# Spark Environment definition
 ENV ENABLE_INIT_DAEMON false
 ENV INIT_DAEMON_BASE_URI http://identifier/init-daemon
 ENV INIT_DAEMON_STEP spark_master_init
@@ -12,14 +13,52 @@ COPY wait-for-step.sh /
 COPY execute-step.sh /
 COPY finish-step.sh /
 
-RUN apk add --no-cache curl bash openjdk8-jre python3 py-pip nss libc6-compat coreutils procps \
-    && ln -s /lib64/ld-linux-x86-64.so.2 /lib/ld-linux-x86-64.so.2 \
-    && chmod +x *.sh \
-    && wget ${BASE_URL}/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz \
-    && tar -xvzf spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz \
-    && mv spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION} spark \
-    && rm spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz \
-    && cd /
+# Mostly copied from by "base" Ubuntu package but
+# chosen to keep this separate as the data cluster is mix and match
+# Do not install recommended packages
+COPY ./apt.conf /etc/apt/apt.conf.d/custom.conf
+
+# Locales not installed in Debian
+RUN apt-get update --fix-missing && DEBIAN_FRONTEND=noninteractive apt-get install -y locales
+
+# Configure US English locale
+RUN sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
+    dpkg-reconfigure --frontend=noninteractive locales && \
+    update-locale LANG=en_US.UTF-8
+
+# Default to supporting utf-8
+ENV LANG en_US.UTF-8
+
+#ENV R_BASE_VERSION 4.1.2
+
+# Set up basic packages
+RUN apt-get update --fix-missing && \
+    apt-get -y upgrade && \
+    # Essential tools
+    apt-get install -y ca-certificates tzdata wget zip unzip && \
+    # Fix timezone
+    ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime && \
+    # Required for Spark and R (dirmngr and software-properties-common)
+    apt-get install -y --no-install-recommends curl dirmngr openjdk-8-jdk python3-dev python3-pip software-properties-common && \
+    # R Cran repository
+    wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc | tee -a /etc/apt/trusted.gpg.d/cran_ubuntu_key.asc && \
+    add-apt-repository "deb https://cloud.r-project.org/bin/linux/ubuntu $(lsb_release -cs)-cran40/" && \
+    # R and related deps
+    apt-get install -y --no-install-recommends fonts-texgyre libopenblas0-pthread littler r-cran-littler \
+        r-base r-base-dev \
+        r-base-core r-recommended \
+        libcurl4-openssl-dev libssl-dev libxml2-dev libgsl-dev
+
+# Essential R packages
+RUN R -e "Sys.setenv('NOT_CRAN' = TRUE); install.packages(c('arrow', 'RCurl', 'DBI', 'devtools', 'plotly', 'sparklyr', 'sparklyr.nested', 'stringi', 'stringr', 'tidyverse'))" && \
+    R -e "Sys.setenv('NOT_CRAN' = TRUE); install.packages(c('broom', 'digest', 'httr', 'igraph', 'lubridate', 'rvest', 'textdata', 'topicmodels', 'tm', 'textclean', 'tidytext', 'tokenizers', 'urltools', 'uuid'))"
+    
+# And now install Spark itself
+RUN wget ${BASE_URL}/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz && \
+    tar -xvzf spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz && \
+    mv spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION} spark && \
+    rm spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz && \
+    cd /
 
 #Give permission to execute scripts
 RUN chmod +x /wait-for-step.sh && chmod +x /execute-step.sh && chmod +x /finish-step.sh
